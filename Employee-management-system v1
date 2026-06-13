@@ -1,0 +1,427 @@
+"""
+Employee Management System
+"""
+
+import json
+import pandas as pd
+from abc import ABC, abstractmethod
+
+
+# ─────────────────────────────────────────────
+#  CUSTOM EXCEPTIONS
+# ─────────────────────────────────────────────
+
+class NegativeSalaryError(Exception):
+    pass
+
+class GenderError(Exception):
+    pass
+
+class MobileNoError(Exception):
+    pass
+
+class AgeError(Exception):
+    pass
+
+class BankNoError(Exception):
+    pass
+
+
+# ─────────────────────────────────────────────
+#  ABSTRACT BASE CLASS
+# ─────────────────────────────────────────────
+
+class Employee(ABC):
+    """
+    Abstract base class that enforces a contract for all employee types.
+    Handles validation and encapsulation for shared fields.
+    """
+
+    def __init__(self, id, name, gender, phone, email, department, role,
+                 employment_type, age, salary, hire_date, status,
+                 origin, marital_status, bank_account, tax_id):
+        self._id = id
+        self.name = name
+        self.gender = gender
+        self.phone = phone
+        self.email = email
+        self.department = department
+        self.role = role
+        self.employment_type = employment_type
+        self.age = age
+        self.salary = salary
+        self.hire_date = hire_date
+        self.status = status
+        self.origin = origin
+        self.marital_status = marital_status
+        self.bank_account = bank_account
+        self.tax_id = tax_id
+
+    # ── Abstract methods (must be implemented by subclasses) ──
+
+    @abstractmethod
+    def calculate_pay(self) -> float:
+        """Returns the employee's pay for the period."""
+        pass
+
+    @abstractmethod
+    def get_role_type(self) -> str:
+        """Returns a string describing the employment type."""
+        pass
+
+    @abstractmethod
+    def display_details(self):
+        """Prints a formatted summary of the employee."""
+        pass
+
+    # ── ID (read-only) ──
+
+    @property
+    def id(self):
+        return self._id
+
+    # ── Name ──
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        if not value.strip():
+            raise ValueError("Name cannot be empty.")
+        self._name = value.strip()
+
+    # ── Gender ──
+
+    @property
+    def gender(self):
+        return self._gender
+
+    @gender.setter
+    def gender(self, value):
+        if value.strip().lower() not in ("male", "female"):
+            raise GenderError(f"Invalid gender: '{value}'. Must be 'male' or 'female'.")
+        self._gender = value.strip().lower()
+
+    # ── Phone ──
+
+    @property
+    def phone(self):
+        return self._phone
+
+    @phone.setter
+    def phone(self, value):
+        if len(value) != 11 or not value.isdigit():
+            raise MobileNoError(f"Invalid phone number: '{value}'. Must be 11 digits.")
+        self._phone = value
+
+    # ── Age ──
+
+    @property
+    def age(self):
+        return self._age
+
+    @age.setter
+    def age(self, value):
+        if not (18 <= value <= 65):
+            raise AgeError(f"Invalid age: {value}. Must be between 18 and 65.")
+        self._age = value
+
+    # ── Salary ──
+
+    @property
+    def salary(self):
+        return self._salary
+
+    @salary.setter
+    def salary(self, value):
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            raise ValueError(f"Salary must be a number, got: '{value}'.")
+        if value < 0:
+            raise NegativeSalaryError("Salary cannot be negative.")
+        self._salary = value
+
+    # ── Bank Account ──
+
+    @property
+    def bank_account(self):
+        return self._bank_account
+
+    @bank_account.setter
+    def bank_account(self, value):
+        if len(value) != 10 or not value.isdigit():
+            raise BankNoError(f"Invalid bank account: '{value}'. Must be exactly 10 digits.")
+        self._bank_account = value
+
+    # ── Shared utility ──
+
+    def to_dict(self) -> dict:
+        """Converts the employee to a dictionary for JSON serialisation."""
+        return {
+            "id": self._id,
+            "name": self._name,
+            "gender": self._gender,
+            "phone": self._phone,
+            "email": self.email,
+            "department": self.department,
+            "role": self.role,
+            "employment_type": self.employment_type,
+            "age": self._age,
+            "salary": self._salary,
+            "hire_date": self.hire_date,
+            "status": self.status,
+            "origin": self.origin,
+            "marital_status": self.marital_status,
+            "bank_account": self._bank_account,
+            "tax_id": self.tax_id,
+        }
+
+
+# ─────────────────────────────────────────────
+#  PAY STRATEGY
+# ─────────────────────────────────────────────
+
+class PayStrategy(ABC):
+    """Abstract pay strategy — decouples pay logic from employee classes."""
+
+    @abstractmethod
+    def compute(self, salary: float, **kwargs) -> float:
+        pass
+
+
+class SalariedStrategy(PayStrategy):
+    def compute(self, salary: float, tax_rate: float = 0.10, **kwargs) -> float:
+        return salary - (salary * tax_rate)
+
+
+class HourlyStrategy(PayStrategy):
+    def compute(self, salary: float, hourly_rate: float = 0,
+                hours_worked: float = 0, **kwargs) -> float:
+        # `salary` is required by the abstract interface but unused here;
+        # hourly pay is entirely determined by rate x hours.
+        return hourly_rate * hours_worked
+
+
+class ContractStrategy(PayStrategy):
+    def compute(self, salary: float, daily_rate: float = 0,
+                days_worked: int = 0, **kwargs) -> float:
+        # `salary` is required by the abstract interface but unused here;
+        # contract pay is entirely determined by daily rate x days worked.
+        return daily_rate * days_worked
+
+
+# ─────────────────────────────────────────────
+#  CONCRETE EMPLOYEE TYPES
+# ─────────────────────────────────────────────
+
+class FullTimeEmployee(Employee):
+    """Salaried employee with tax deduction and bonus support."""
+
+    def __init__(self, *args, tax_rate: float = 0.10, bonus_rate: float = 0.10, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tax_rate = tax_rate
+        self.bonus_rate = bonus_rate
+        self._pay_strategy = SalariedStrategy()
+
+    def calculate_pay(self) -> float:
+        net = self._pay_strategy.compute(self._salary, tax_rate=self.tax_rate)
+        bonus = self._salary * self.bonus_rate if self._salary > 200_000 else 0
+        return net + bonus
+
+    def get_role_type(self) -> str:
+        return "Full-Time Employee"
+
+    def display_details(self):
+        print(
+            f"[Full-Time] {self._name} | Dept: {self.department} | "
+            f"Role: {self.role} | Net Pay: N{self.calculate_pay():,.2f}"
+        )
+
+
+class PartTimeEmployee(Employee):
+    """Hourly employee — pay depends on hours worked."""
+
+    def __init__(self, *args, hourly_rate: float = 0, hours_worked: float = 0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hourly_rate = hourly_rate
+        self.hours_worked = hours_worked
+        self._pay_strategy = HourlyStrategy()
+
+    def calculate_pay(self) -> float:
+        return self._pay_strategy.compute(
+            self._salary,
+            hourly_rate=self.hourly_rate,
+            hours_worked=self.hours_worked,
+        )
+
+    def get_role_type(self) -> str:
+        return "Part-Time Employee"
+
+    def display_details(self):
+        print(
+            f"[Part-Time] {self._name} | Dept: {self.department} | "
+            f"Hours: {self.hours_worked} | Pay: N{self.calculate_pay():,.2f}"
+        )
+
+
+class Contractor(Employee):
+    """Daily-rate contractor."""
+
+    def __init__(self, *args, daily_rate: float = 0, days_worked: int = 0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.daily_rate = daily_rate
+        self.days_worked = days_worked
+        self._pay_strategy = ContractStrategy()
+
+    def calculate_pay(self) -> float:
+        return self._pay_strategy.compute(
+            self._salary,
+            daily_rate=self.daily_rate,
+            days_worked=self.days_worked,
+        )
+
+    def get_role_type(self) -> str:
+        return "Contractor"
+
+    def display_details(self):
+        print(
+            f"[Contractor] {self._name} | Dept: {self.department} | "
+            f"Days: {self.days_worked} | Pay: N{self.calculate_pay():,.2f}"
+        )
+
+
+# ─────────────────────────────────────────────
+#  MANAGER HIERARCHY
+# ─────────────────────────────────────────────
+
+class Manager(FullTimeEmployee):
+    """A full-time employee who leads a team."""
+
+    def __init__(self, *args, team_size: int = 0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.team_size = team_size
+
+    def get_role_type(self) -> str:
+        return f"Manager (team of {self.team_size})"
+
+    def display_details(self):
+        print(
+            f"[Manager] {self._name} | Dept: {self.department} | "
+            f"Team: {self.team_size} | Net Pay: N{self.calculate_pay():,.2f}"
+        )
+
+
+class ProjectManager(Manager):
+    """Manager responsible for a specific project."""
+
+    def __init__(self, *args, project_name: str = "", project_budget: float = 0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.project_name = project_name
+        self.project_budget = project_budget
+
+    def manage_project(self) -> str:
+        return (
+            f"{self._name} manages project '{self.project_name}' "
+            f"with a budget of N{self.project_budget:,.2f}"
+        )
+
+    def get_role_type(self) -> str:
+        return f"Project Manager - {self.project_name}"
+
+    def display_details(self):
+        print(
+            f"[Project Manager] {self._name} | Project: {self.project_name} | "
+            f"Budget: N{self.project_budget:,.2f} | Net Pay: N{self.calculate_pay():,.2f}"
+        )
+
+
+# ─────────────────────────────────────────────
+#  DEPARTMENT
+# ─────────────────────────────────────────────
+
+class Department:
+    """Manages a collection of employees using only the Employee interface."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self._employees: list[Employee] = []
+
+    def add_employee(self, emp: Employee):
+        if not isinstance(emp, Employee):
+            raise TypeError(f"Expected an Employee instance, got {type(emp).__name__}.")
+        self._employees.append(emp)
+
+    def total_payroll(self) -> float:
+        return sum(emp.calculate_pay() for emp in self._employees)
+
+    def department_report(self):
+        print(f"\n{'─'*50}")
+        print(f"  Department: {self.name}")
+        print(f"{'─'*50}")
+        for emp in self._employees:
+            emp.display_details()
+        print(f"  Total Payroll: N{self.total_payroll():,.2f}")
+        print(f"{'─'*50}\n")
+
+
+# ─────────────────────────────────────────────
+#  DATA LAYER  (JSON + Pandas)
+# ─────────────────────────────────────────────
+
+EMPLOYEES_FILE = "employees.json"
+
+EMPLOYEES_DATA = [
+    {"id": 1,  "name": "Amina Yusuf",     "gender": "Female", "email": "amina1@gmail.com",     "phone": "08011111111", "role": "Software Developer",  "department": "IT",              "salary": 250000, "age": 24, "status": "active",   "employment_type": "Full-time", "hire_date": "2023-01-10", "origin": "Nigeria", "marital_status": "Single",  "bank_account": "0123456785", "tax_id": "TX1001"},
+    {"id": 2,  "name": "Chinedu Okafor",  "gender": "Male",   "email": "chinedu2@gmail.com",   "phone": "08022222222", "role": "Data Analyst",         "department": "IT",              "salary": 220000, "age": 28, "status": "active",   "employment_type": "Full-time", "hire_date": "2022-05-15", "origin": "Nigeria", "marital_status": "Married", "bank_account": "0123456712", "tax_id": "TX1002"},
+    {"id": 3,  "name": "Fatima Bello",    "gender": "Female", "email": "fatima3@gmail.com",    "phone": "08033333333", "role": "HR Manager",           "department": "Human Resources", "salary": 300000, "age": 32, "status": "active",   "employment_type": "Full-time", "hire_date": "2021-08-20", "origin": "Nigeria", "marital_status": "Married", "bank_account": "0123455679", "tax_id": "TX1003"},
+    {"id": 4,  "name": "John Smith",      "gender": "Male",   "email": "john4@gmail.com",      "phone": "08044444444", "role": "Accountant",           "department": "Finance",         "salary": 210000, "age": 30, "status": "inactive", "employment_type": "Contract",  "hire_date": "2020-03-12", "origin": "USA",    "marital_status": "Single",  "bank_account": "0123495679", "tax_id": "TX1004"},
+    {"id": 5,  "name": "Grace Nwosu",     "gender": "Female", "email": "grace5@gmail.com",     "phone": "08055555555", "role": "UI/UX Designer",       "department": "Design",          "salary": 230000, "age": 26, "status": "active",   "employment_type": "Full-time", "hire_date": "2023-06-01", "origin": "Nigeria", "marital_status": "Single",  "bank_account": "0123045679", "tax_id": "TX1005"},
+    {"id": 6,  "name": "David Brown",     "gender": "Male",   "email": "david6@gmail.com",     "phone": "08066666666", "role": "Project Manager",      "department": "Operations",      "salary": 350000, "age": 35, "status": "active",   "employment_type": "Full-time", "hire_date": "2019-11-25", "origin": "UK",     "marital_status": "Married", "bank_account": "0123456789", "tax_id": "TX1006"},
+    {"id": 7,  "name": "Ifeoma Uche",     "gender": "Female", "email": "ifeoma7@gmail.com",    "phone": "08077777777", "role": "Marketing Executive",  "department": "Marketing",       "salary": 200000, "age": 27, "status": "active",   "employment_type": "Full-time", "hire_date": "2022-09-10", "origin": "Nigeria", "marital_status": "Single",  "bank_account": "0123456799", "tax_id": "TX1007"},
+    {"id": 8,  "name": "Samuel Ade",      "gender": "Male",   "email": "samuel8@gmail.com",    "phone": "08088888888", "role": "Network Engineer",     "department": "IT",              "salary": 280000, "age": 29, "status": "active",   "employment_type": "Full-time", "hire_date": "2021-02-18", "origin": "Nigeria", "marital_status": "Single",  "bank_account": "0123456979", "tax_id": "TX1008"},
+    {"id": 9,  "name": "Linda James",     "gender": "Female", "email": "linda9@gmail.com",     "phone": "08099999999", "role": "Customer Support",     "department": "Support",         "salary": 150000, "age": 25, "status": "active",   "employment_type": "Part-time", "hire_date": "2024-01-05", "origin": "Nigeria", "marital_status": "Single",  "bank_account": "0123456790", "tax_id": "TX1009"},
+    {"id": 10, "name": "Peter Obi",       "gender": "Male",   "email": "peter10@gmail.com",    "phone": "08100000000", "role": "Business Analyst",     "department": "Business",        "salary": 270000, "age": 31, "status": "active",   "employment_type": "Full-time", "hire_date": "2020-07-14", "origin": "Nigeria", "marital_status": "Married", "bank_account": "0123456890", "tax_id": "TX1010"},
+    {"id": 11, "name": "Blessing Eze",    "gender": "Female", "email": "blessing11@gmail.com", "phone": "08111111111", "role": "Frontend Developer",   "department": "IT",              "salary": 240000, "age": 25, "status": "active",   "employment_type": "Full-time", "hire_date": "2023-03-15", "origin": "Nigeria", "marital_status": "Single",  "bank_account": "0123456809", "tax_id": "TX1011"},
+    {"id": 12, "name": "Mohammed Sani",   "gender": "Male",   "email": "mohammed12@gmail.com", "phone": "08122222222", "role": "Backend Developer",    "department": "IT",              "salary": 260000, "age": 29, "status": "active",   "employment_type": "Full-time", "hire_date": "2022-10-01", "origin": "Nigeria", "marital_status": "Married", "bank_account": "0123456801", "tax_id": "TX1012"},
+    {"id": 13, "name": "Jennifer Okoye",  "gender": "Female", "email": "jennifer13@gmail.com", "phone": "08133333333", "role": "Product Manager",      "department": "Operations",      "salary": 320000, "age": 33, "status": "active",   "employment_type": "Full-time", "hire_date": "2021-06-20", "origin": "Nigeria", "marital_status": "Married", "bank_account": "0123456813", "tax_id": "TX1013"},
+    {"id": 14, "name": "Michael Johnson", "gender": "Male",   "email": "michael14@gmail.com",  "phone": "08144444444", "role": "DevOps Engineer",      "department": "IT",              "salary": 300000, "age": 34, "status": "active",   "employment_type": "Full-time", "hire_date": "2020-09-12", "origin": "USA",    "marital_status": "Single",  "bank_account": "0123456804", "tax_id": "TX1014"},
+    {"id": 15, "name": "Uchechi Nnamdi",  "gender": "Female", "email": "uchechi15@gmail.com",  "phone": "08155555555", "role": "Graphic Designer",     "department": "Design",          "salary": 210000, "age": 27, "status": "active",   "employment_type": "Contract",  "hire_date": "2023-08-05", "origin": "Nigeria", "marital_status": "Single",  "bank_account": "0123456800", "tax_id": "TX1015"},
+    {"id": 16, "name": "Daniel Williams", "gender": "Male",   "email": "daniel16@gmail.com",   "phone": "08166666666", "role": "System Administrator", "department": "IT",              "salary": 280000, "age": 31, "status": "active",   "employment_type": "Full-time", "hire_date": "2021-04-18", "origin": "UK",     "marital_status": "Married", "bank_account": "0123745680", "tax_id": "TX1016"},
+    {"id": 17, "name": "Ruth Abraham",    "gender": "Female", "email": "ruth17@gmail.com",     "phone": "08177777777", "role": "Sales Executive",      "department": "Sales",           "salary": 190000, "age": 26, "status": "active",   "employment_type": "Full-time", "hire_date": "2022-12-10", "origin": "Nigeria", "marital_status": "Single",  "bank_account": "0123456817", "tax_id": "TX1017"},
+    {"id": 18, "name": "Emeka Uzo",       "gender": "Male",   "email": "emeka18@gmail.com",    "phone": "08188888888", "role": "Business Analyst",     "department": "Business",        "salary": 270000, "age": 30, "status": "active",   "employment_type": "Full-time", "hire_date": "2020-11-22", "origin": "Nigeria", "marital_status": "Married", "bank_account": "0123456808", "tax_id": "TX1018"},
+    {"id": 19, "name": "Sophie Martin",   "gender": "Female", "email": "sophie19@gmail.com",   "phone": "08199999999", "role": "UI Designer",          "department": "Design",          "salary": 230000, "age": 28, "status": "inactive", "employment_type": "Contract",  "hire_date": "2019-07-14", "origin": "France", "marital_status": "Single",  "bank_account": "0123456980", "tax_id": "TX1019"},
+    {"id": 20, "name": "Victor Okon",     "gender": "Male",   "email": "victor20@gmail.com",   "phone": "08200000000", "role": "Data Scientist",       "department": "IT",              "salary": 350000, "age": 32, "status": "active",   "employment_type": "Full-time", "hire_date": "2021-01-30", "origin": "Nigeria", "marital_status": "Single",  "bank_account": "0123456981", "tax_id": "TX1020"},
+]
+
+
+def save_to_json(data: list[dict], filepath: str = EMPLOYEES_FILE):
+    with open(filepath, "w") as f:
+        json.dump(data, f, indent=4)
+    print(f"Saved {len(data)} records to '{filepath}'.")
+
+
+def load_from_json(filepath: str = EMPLOYEES_FILE) -> list[dict]:
+    with open(filepath, "r") as f:
+        return json.load(f)
+
+
+def add_employee_interactive(employees: list[dict], filepath: str = EMPLOYEES_FILE) -> list[dict]:
+    """
+    Prompts the user for input, validates each field via the Employee setters,
+    appends the new record, and immediately saves to JSON.
+    """
+    print("\n-- Add New Employee --")
+    try:
+        emp_id          = input("ID: ").strip()
+        name            = input("Name: ").strip()
+        gender          = input("Gender (male/female): ").strip().lower()
+        phone           = input("Phone (11 digits): ").strip()
+        email           = input("Email: ").strip()
+        department      = input("Department: ").strip()
+        role            = input("Role: ").strip()
+        employment_type = input("Employment type (Full-time/Part-time/Contract): ").strip()
+        age             = int(input("Age: "))
+        salary   
